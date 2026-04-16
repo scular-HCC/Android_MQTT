@@ -44,10 +44,11 @@ class MqttService {
     onStatus(status, '');
 
     try {
+      
       if (username.trim().isEmpty || password.trim().isEmpty) {
-        throw Exception(
-            'HiveMQ Cloud requires a username and password.');
+        throw Exception('HiveMQ Cloud requires a username and password.');
       }
+
 
       if (kIsWeb) {
         final Client = MqttServerClient(
