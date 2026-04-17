@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'mqtt_service.dart';
+import 'package:fl_chart/fl_chart.dart';
 
 void main() {
   runApp(const MyApp());
@@ -24,6 +25,29 @@ class MqttHomePage extends StatefulWidget {
   State<MqttHomePage> createState() => _MqttHomePageState();
 }
 
+
+class _ReceivedMessage {
+  final DateTime timestamp;
+  final String payload;
+
+  _ReceivedMessage({
+    required this.timestamp,
+    required this.payload,
+  });
+}
+
+// Setup for the chart if received message is a number
+class _NumericSample {
+  final DateTime timestamp;
+  final double value;
+
+  _NumericSample({
+    required this.timestamp,
+    required this.value,
+  });
+}
+
+
 class _MqttHomePageState extends State<MqttHomePage> {
   late MqttService mqttService;
 
@@ -42,6 +66,19 @@ class _MqttHomePageState extends State<MqttHomePage> {
       TextEditingController();
 
   static const String topic = 'test/flutter';
+
+  final List<_ReceivedMessage> receivedMessages = [];
+
+  final List<_NumericSample> numericSamples = []; // required for the chart
+
+  String _formatTimestamp(DateTime time) {
+    return '${time.year.toString().padLeft(4, '0')}-'
+          '${time.month.toString().padLeft(2, '0')}-'
+          '${time.day.toString().padLeft(2, '0')} '
+          '${time.hour.toString().padLeft(2, '0')}:'
+          '${time.minute.toString().padLeft(2, '0')}:'
+          '${time.second.toString().padLeft(2, '0')}';
+  }
 
   String receivedMessage = 'Waiting for messages...';
   String activeClientId = '';
@@ -80,6 +117,26 @@ class _MqttHomePageState extends State<MqttHomePage> {
       (message) {
         setState(() {
           receivedMessage = message;
+          
+          final now = DateTime.now();
+
+            receivedMessages.add(
+              _ReceivedMessage(
+                timestamp: now,
+                payload: message,
+              ),
+            );
+
+            // Try to parse numeric payloads
+            final parsedValue = double.tryParse(message.trim());
+            if (parsedValue != null) {
+              numericSamples.add(
+                _NumericSample(
+                  timestamp: now,
+                  value: parsedValue,
+                ),
+              );
+            }
         });
       },
       (status, error) {
@@ -108,6 +165,45 @@ class _MqttHomePageState extends State<MqttHomePage> {
     super.dispose();
   }
 
+Widget _messageTable() {
+  if (receivedMessages.isEmpty) {
+    return const SizedBox.shrink();
+  }
+
+  return Card(
+    child: SizedBox(
+      height: receivedMessages.length >= 5 ? 220 : null,
+      child: SingleChildScrollView(
+        child: DataTable(
+          columns: const [
+            DataColumn(label: Text('#')),
+            DataColumn(label: Text('Timestamp')),
+            DataColumn(label: Text('Payload')),
+          ],
+          rows: List.generate(
+            receivedMessages.length,
+            (index) {
+              final msg = receivedMessages[index];
+              return DataRow(
+                cells: [
+                  DataCell(Text('${index + 1}')),
+                  DataCell(
+                    SelectableText(
+                      _formatTimestamp(msg.timestamp),
+                    ),
+                  ),
+                  DataCell(
+                    SelectableText(msg.payload),
+                  ),
+                ],
+              );
+            },
+          ),
+        ),
+      ),
+    ),
+  );
+}
 
 Widget _statusWidget() {
   Color color;
@@ -163,6 +259,63 @@ Widget _statusWidget() {
             SelectableText('Host: ${hostController.text}'),
             SelectableText('Client ID: $activeClientId'),
             SelectableText('Topic: $topic'),
+          ],
+        ),
+      ),
+    );
+  }
+
+
+  Widget _numericPlot() {
+    if (numericSamples.length < 2) {
+      return const SizedBox.shrink();
+    }
+
+    final spots = numericSamples.asMap().entries.map((entry) {
+      return FlSpot(
+        entry.key.toDouble(),
+        entry.value.value,
+      );
+    }).toList();
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Numeric Payload Plot',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 12),
+            SizedBox(
+              height: 200,
+              child: LineChart(
+                LineChartData(
+                  lineBarsData: [
+                    LineChartBarData(
+                      spots: spots,
+                      isCurved: true,
+                      barWidth: 2,
+                      dotData: const FlDotData(show: false),
+                    ),
+                  ],
+                  gridData: const FlGridData(show: true),
+                  titlesData: FlTitlesData(
+                    leftTitles: AxisTitles(
+                      sideTitles: SideTitles(showTitles: true),
+                    ),
+                    bottomTitles: AxisTitles(
+                      sideTitles: SideTitles(
+                        showTitles: false,
+                      ),
+                    ),
+                  ),
+                  borderData: FlBorderData(show: true),
+                ),
+              ),
+            ),
           ],
         ),
       ),
@@ -232,7 +385,7 @@ Widget _statusWidget() {
               'Department of Engineering and Technology',
               textAlign: TextAlign.center,
               style:
-                  TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                  TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
             ),
             const SizedBox(height: 16),
             _statusWidget(),
@@ -257,6 +410,25 @@ Widget _statusWidget() {
                 ),
               ),
             ),
+
+          _messageTable(), // List of all received messages
+          
+          _messageTable(), 
+          const SizedBox(height: 16),
+          _numericPlot(),
+
+          // Button to clear list of messages
+          ElevatedButton(
+            onPressed: () {
+              setState(() {
+                receivedMessages.clear();
+                receivedMessage = 'Waiting for messages...';
+              });
+            },
+            child: const Text('Clear Messages'),
+          ), 
+
+
             const SizedBox(height: 20),
             TextField(
               controller: messageController,
@@ -271,7 +443,7 @@ Widget _statusWidget() {
                 mqttService.publish(messageController.text);
                 messageController.clear();
               },
-              child: const SelectableText('Publish'),
+              child: const Text('Publish'),
             ),
             const SizedBox(height: 10),
             ElevatedButton(
